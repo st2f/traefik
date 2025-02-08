@@ -1,0 +1,83 @@
+services:
+  traefik:
+    image: traefik:v3.3.4
+    ports:
+      - 80:80
+      - 443:443
+      - 3306:3306
+    networks:
+      - proxy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - letsencrypt:/letsencrypt
+      - ./log:/var/log
+      - ./dynamic_conf.yml:/etc/traefik/dynamic_conf.yml
+    command:
+      - --api.dashboard=true
+      - --api.debug=true
+      - --log.level=DEBUG
+      - --log.filepath=/var/log/traefik.log
+      - --accesslog=true
+      - --accesslog.filepath=/var/log/traefik-access.log
+      - --providers.docker.network=proxy
+      - --providers.file.filename=/etc/traefik/dynamic_conf.yml
+      - --providers.file.watch=true
+      - --providers.docker.exposedByDefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entryPoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443  
+      - --entrypoints.websecure.http.tls.options=default
+      - --entrypoints.websecure.http.tls.certresolver=myresolver
+      - --certificatesresolvers.myresolver.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.myresolver.acme.tlschallenge=true
+      - --certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json
+      - --entrypoints.mariadb.address=:3306
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.mydashboard.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.mydashboard.service=api@internal
+      - traefik.http.routers.mydashboard.middlewares=myauth
+      - traefik.http.middlewares.myauth.basicauth.users=${TRAEFIK_AUTHUSER}:${TRAEFIK_AUTHPASS}
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    command: -H unix:///var/run/docker.sock
+    restart: always
+    networks:
+      - proxy
+    volumes:
+      - portainer_data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.portainer.entrypoints=websecure
+      - traefik.http.routers.portainer.rule=Host(`${PORTAINER_HOST}`)
+      - traefik.http.services.portainer.loadbalancer.server.port=${PORTAINER_PORT}
+
+  filebrowser:
+    container_name: filebrowser
+    image: filebrowser/filebrowser:latest
+    restart: unless-stopped
+    networks:
+      - proxy
+    volumes:
+      - '/app:/srv'
+      - '/app/filebrowser/filebrowser.db:/database.db'
+      - '/app/filebrowser/.filebrowser.json:/.filebrowser.json'
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.filebrowser.entrypoints=websecure
+      - traefik.http.routers.filebrowser.rule=Host(`${FILEBROWSER_HOST}`)
+      - traefik.http.services.filebrowser.loadbalancer.server.port=${FILEBROWSER_PORT}
+
+networks:
+  proxy:
+    name: "proxy"
+    external: true
+
+volumes:
+  portainer_data:
+  letsencrypt:
+    name: letsencrypt
+  
